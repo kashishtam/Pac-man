@@ -6,6 +6,9 @@ public class GameSounds : MonoBehaviour
 {
     public AudioSource munch1;
     public AudioSource munch2;
+    public AudioSource death;
+    public AudioSource ghostEaten;
+    public AudioSource powerPellet;
     private int currentMunch = 0;
 
     public void playMunchSound(){
@@ -16,5 +19,16 @@ public class GameSounds : MonoBehaviour
             munch2.Play();
             currentMunch = 0;
         }
+    }
+
+    public void playDeathSound(){
+        death.Play();
+    }
+    public void playGhostEatenSound(){
+        ghostEaten.Play();
+    }
+    public void playPowerPelletSound(float duration){
+        powerPellet.Play();
+        powerPellet.SetScheduledEndTime(AudioSettings.dspTime+(duration));
     }
 }

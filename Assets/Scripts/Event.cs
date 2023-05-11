@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
+//============ OO Pattern: Observer ============
 public class Event {
     public enum eventType { PowerPellet, AISwap, AIModeChange, Panic, Pause };
     bool pelletActive;

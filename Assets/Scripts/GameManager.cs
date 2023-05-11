@@ -1,31 +1,44 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using TMPro;
 
 public class GameManager : MonoBehaviour, Subject
 {
+    enum gameState { Gameplay, Interlude, Standby };
+    public enum gameMode { Classic, Extended, Chaos };
+    
     public GameObject ghostPrefab;
     public GameObject jailNode;
     List<Observer> subscribers;
     List<MazeEntity> mazeEntities;
     List<Transform> mazeEatables;
     AIPool pool;
+    InterludeManager interlude;
+    UIManager ui;
+    GameSounds gameSound;
+    public TextMeshProUGUI AISwapText;
 
     public Pacman pacman;
     public int score {get; private set;}
     public int ghostMultiplier{ get; private set;} = 1;
     public int lives{get; private set;} = 3;
 
-    public GameSounds gameSound;
-
     float AIModeSwapTimer = 0;
     int AIModeSwapIndex = 0;
+    float chaosSwapTimer = 12f;
     float powerPelletTimer = 0f;
     bool powerPelletActive = false;
+    bool gameWon = false;
+    gameState currentState = gameState.Standby;
+    gameMode currentMode = gameMode.Classic;
 
     void Start(){
         subscribers = new List<Observer>();
         mazeEntities = new List<MazeEntity>();
+        ui = GetComponent<UIManager>();
+        gameSound = GetComponent<GameSounds>();
 
         // get pacman
         pacman = GameObject.Find("Pacman").GetComponent<Pacman>();
@@ -48,11 +61,6 @@ public class GameManager : MonoBehaviour, Subject
         foreach(GameObject ghostObj in ghosts){
             Ghost ghost = ghostObj.GetComponent<Ghost>();
             ghost.init(jailNode);
-
-            AIPattern pattern = pool.getRandom();
-            pattern.setAIMode(AIMode.Chase);
-            ghost.setAIPattern(pattern);
-
             ghost.setParent(this);
             subscribe(ghost);
             mazeEntities.Add(ghost);
@@ -62,39 +70,64 @@ public class GameManager : MonoBehaviour, Subject
     }
 
     void Update(){
-        foreach (MazeEntity entity in mazeEntities){
-            entity.move();
-        }
-
-        // update power pellet
-        if(powerPelletActive){
-            if(powerPelletTimer > 0){
-                powerPelletTimer -= Time.deltaTime;
-            }else{
-                powerPelletTimer = 0;
-                powerPelletActive = false;
-                ResetGhostMultiplier();
-                Event pelletEndEvent = new Event(Event.eventType.PowerPellet, false);
-                notifySubscribers(pelletEndEvent);
+        switch(currentState){
+            case gameState.Gameplay:
+            foreach (MazeEntity entity in mazeEntities){
+                entity.move();
             }
-        }
 
-        // update AI modes
-        if(AIModeSwapIndex < 7){
-            if(AIModeSwapTimer > 0f){
-                AIModeSwapTimer -= Time.deltaTime;
-            }else{
-                AIModeSwapTimer = getNextSwapTimer(AIModeSwapIndex);
-                AIMode newMode = getNextAIMode(AIModeSwapIndex);
-                AIModeSwapIndex += 1;
-
-                Event AIModeEvent = new Event(Event.eventType.AIModeChange, false, newMode);
-                notifySubscribers(AIModeEvent);
-                Debug.Log("Changing to AI mode "+newMode);
+            // update power pellet
+            if(powerPelletActive){
+                if(powerPelletTimer > 0){
+                    powerPelletTimer -= Time.deltaTime;
+                }else{
+                    powerPelletTimer = 0;
+                    powerPelletActive = false;
+                    ResetGhostMultiplier();
+                    Event pelletEndEvent = new Event(Event.eventType.PowerPellet, false);
+                    notifySubscribers(pelletEndEvent);
+                }
             }
+
+            // update AI modes
+            if(AIModeSwapIndex < 7){
+                if(AIModeSwapTimer > 0f){
+                    AIModeSwapTimer -= Time.deltaTime;
+                }else{
+                    AIModeSwapTimer = getNextSwapTimer(AIModeSwapIndex);
+                    AIMode newMode = getNextAIMode(AIModeSwapIndex);
+                    AIModeSwapIndex += 1;
+
+                    Event AIModeEvent = new Event(Event.eventType.AIModeChange, false, newMode);
+                    notifySubscribers(AIModeEvent);
+                }
+            }
+
+            // update timer for chaos mode
+            if(currentMode == gameMode.Chaos){
+                if(chaosSwapTimer > 0){
+                    chaosSwapTimer -= Time.deltaTime;
+                }else if(powerPelletTimer <= 0){
+                    AISwap();
+                    chaosSwapTimer = 12f;
+                }
+                AISwapText.text = "Ghosts Swap In: \n"+((int)chaosSwapTimer);
+            }
+            break;
+
+            case gameState.Interlude:
+            if(interlude == null){
+                currentState = gameState.Gameplay;
+            }else{
+                if(interlude.IsInterludeFinished()){
+                    currentState = gameState.Gameplay;
+                }
+            }
+            break;
         }
     }
 
+    //============ OO Pattern: Observer(Subject) ============
     public void notifySubscribers(Event newEvent){
         foreach(Observer subscriber in subscribers){
             subscriber.eventUpdate(newEvent);
@@ -111,31 +144,37 @@ public class GameManager : MonoBehaviour, Subject
     private void SetScore(int score)
     {
         this.score = score;
+        HighScoreManager.instance.UpdateScore(score);
     }
 
     public void GhostEaten(Ghost ghost){
+        gameSound.playGhostEatenSound();
         SetScore(this.score + (ghost.points * this.ghostMultiplier));
         this.ghostMultiplier++;
-        //pacman.gameObject.GetComponent<Rigidbody2D>().isKinematic = true;
-        Debug.Log("Ghost "+ghost.getAIPattern().getName()+" has been eaten");
     }
 
     public void PacmanEaten()
     {
-        newRound();
+        gameSound.playDeathSound();
+        pacman.die();
         lives -= 1;
-        Debug.Log("Pacman has been eaten");
+        currentState = gameState.Standby;
+        gameWon = false;
+        Invoke("newRound", 1.3f);
     }
 
     public void PelletEaten(Pellet pellet){
         pellet.gameObject.SetActive(false);
         gameSound.playMunchSound();
+
         SetScore(this.score + pellet.points);
         
         int remaining = remainingPellets();
         if(remaining <= 0){
             // All pellets eaten
-            newRound();
+            currentState = gameState.Standby;
+            gameWon = true;
+            Invoke("newRound", 1.3f);
         }else if(remaining <= 20){
             // activate ghost panic mode
             Event panicEvent = new Event(Event.eventType.Panic);
@@ -143,11 +182,11 @@ public class GameManager : MonoBehaviour, Subject
         }
     }
     public void PowerPelletEaten(PowerPellet pellet){
+        gameSound.playPowerPelletSound(pellet.duration);
         pellet.gameObject.SetActive(false);
-        gameSound.playMunchSound();
         Event powerPelletEvent = new Event(Event.eventType.PowerPellet, true);
         notifySubscribers(powerPelletEvent);
-        powerPelletTimer += pellet.duration;
+        powerPelletTimer = pellet.duration;
         powerPelletActive = true;
 
         SetScore(this.score + pellet.points);
@@ -155,7 +194,9 @@ public class GameManager : MonoBehaviour, Subject
         int remaining = remainingPellets();
         if(remaining <= 0){
             // All pellets eaten
-            newRound();
+            currentState = gameState.Standby;
+            gameWon = true;
+            Invoke("newRound", 1.3f);
         }else if(remaining <= 20){
             // activate ghost panic mode
             Event panicEvent = new Event(Event.eventType.Panic);
@@ -163,23 +204,130 @@ public class GameManager : MonoBehaviour, Subject
         }
     }
 
+    public void setGameMode(gameMode newMode){
+        this.currentMode = newMode;
+        AISetup();
+    }
+
+    public void enterHighScore(string initials){
+        HighScoreManager.instance.newScore(score, initials);
+        SetScore(0);
+    }
+
+    public gameMode getGameMode(){
+        return currentMode;
+    }
+
     private void ResetGhostMultiplier(){
         this.ghostMultiplier=1;
+    }
+
+    public void newRound(bool won){
+        gameWon = won;
+        newRound();
     }
 
     private void newRound(){
         foreach(MazeEntity entity in mazeEntities){
             entity.reset();
         }
-        if(lives == 0){
+        AIModeSwapTimer = 0;
+        AIModeSwapIndex = 0;
+
+        if(gameWon || lives == 0){
             foreach(Transform pellet in mazeEatables){
                 pellet.gameObject.SetActive(true);
             }
         }
 
-        score = 0;
+        if(gameWon){
+            switch(currentMode){
+                case gameMode.Extended:
+                    interlude = new InterludeManager(AISwap(), ui);
+                break;
+
+                case gameMode.Chaos:
+                    chaosSwapTimer = 12f;
+                    interlude = new InterludeManager(new List<GameObject>(), ui);
+                break;
+
+                default:
+                    interlude = new InterludeManager(new List<GameObject>(), ui);
+                break;
+            }
+            currentState = gameState.Interlude;
+            gameWon = false;
+        }else{
+            if(lives <= 0){
+                lives = 3;
+                currentState = gameState.Standby;
+                if(HighScoreManager.instance.isHighScore(score)){
+                    ui.openUI(UIManager.UIState.Initials);
+                }else{
+                    SetScore(0);
+                    ui.openUI(UIManager.UIState.Menu);
+                }
+            }else{
+                currentState = gameState.Interlude;
+                interlude = new InterludeManager(new List<GameObject>(), ui);
+                ui.openUI(UIManager.UIState.Lives, "", lives);
+            }
+        }
+        interlude.setParent(this);
+
         powerPelletActive = false;
         powerPelletTimer = 0;
+        Event powerPelletOverride = new Event(Event.eventType.PowerPellet, false);
+        notifySubscribers(powerPelletOverride);
+    }
+
+    private List<GameObject> AISwap(){
+        List<string> priorPatterns = new List<string>();
+        List<GameObject> newAdditions = new List<GameObject>();
+        pool.freeAll();
+        pool.lockPool();
+
+        if(currentMode == gameMode.Chaos && remainingPellets() < 25 && UnityEngine.Random.Range(0f,1f) < 0.2f){
+            // all-blinky rush
+            pool.unlockPool();
+            Ghost.team[0].setAIPattern(pool.get(AIPool.AIType.Blinky));
+            Ghost.team[1].setAIPattern(pool.get(AIPool.AIType.Blinky));
+            Ghost.team[2].setAIPattern(pool.get(AIPool.AIType.Blinky));
+            Ghost.team[3].setAIPattern(pool.get(AIPool.AIType.Blinky));
+        }else{
+            foreach(Ghost member in Ghost.team){
+                priorPatterns.Add(member.getAIPattern().getName());
+                member.setAIPattern(pool.getRandom());
+                if(currentMode == gameMode.Chaos){
+                    member.getAIPattern().setAIMode(AIMode.Chase);
+                }
+            }
+        }
+
+        foreach(Ghost member in Ghost.team){
+            if(!priorPatterns.Contains(member.getAIPattern().getName())){
+                newAdditions.Add(member.gameObject);
+            }
+        }
+
+        return newAdditions;
+    }
+
+    private void AISetup(){
+        pool.freeAll();
+
+        if(currentMode == gameMode.Classic){
+            Ghost.team[0].setAIPattern(pool.get(AIPool.AIType.Blinky));
+            Ghost.team[1].setAIPattern(pool.get(AIPool.AIType.Pinky));
+            Ghost.team[2].setAIPattern(pool.get(AIPool.AIType.Inky));
+            Ghost.team[3].setAIPattern(pool.get(AIPool.AIType.Clyde));
+        }else{
+            foreach(Ghost member in Ghost.team){
+                AIPattern pattern = pool.getRandom();
+                pattern.setAIMode(AIMode.Scatter);
+                member.setAIPattern(pattern);
+            }
+        }
     }
 
     private int remainingPellets(){

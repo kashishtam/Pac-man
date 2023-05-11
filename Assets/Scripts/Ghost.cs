@@ -7,7 +7,7 @@ public class Ghost : MazeEntity, Observer {
     public static Ghost[] team = new Ghost[4];
     public LayerMask pacmanLayer;
 
-    public int points =10;
+    public int points = 100;
     GameObject moveTarget;
     AIPattern currentPattern;
     Transform trans;
@@ -95,7 +95,7 @@ public class Ghost : MazeEntity, Observer {
 
     public void setAIPattern(AIPattern newPattern){
         currentPattern = newPattern;
-        Debug.Log("Got AI pattern "+currentPattern.getName());
+        currentPattern.setParent(this);
         anim.setColor(currentPattern.getColor());
     }
 

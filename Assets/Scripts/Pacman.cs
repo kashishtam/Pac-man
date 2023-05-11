@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 
 public class Pacman : MazeEntity{
-    public float speed = 8f;
+    public float speed = 3f;
     public float speedMultiplier = 1f;
     public Vector2 initialDirection;
     public Vector2 nextDirection { get; private set; }
@@ -12,18 +12,25 @@ public class Pacman : MazeEntity{
     protected new Rigidbody2D rigidbody { get; private set; }
     protected Vector2 direction { get; private set; }
     GameManager parent;
+    PacmanAnimation animator;
+    private bool stopRotating = false;
 
     private void Awake()
     {
         rigidbody = GetComponent<Rigidbody2D>();
+        animator = GetComponent<PacmanAnimation>();
         startingPosition = transform.position;
         direction = initialDirection;
+
+        rigidbody.isKinematic = true;
     }
 
     private void Update() {
-        // Rotate pacman to face the movement direction
-        float angle = Mathf.Atan2(direction.y, direction.x);
-        transform.rotation = Quaternion.AngleAxis(angle * Mathf.Rad2Deg, Vector3.forward);
+        if(!stopRotating){
+            // Rotate pacman to face the movement direction
+            float angle = Mathf.Atan2(direction.y, direction.x);
+            transform.rotation = Quaternion.AngleAxis(angle * Mathf.Rad2Deg, Vector3.forward);
+        }
     }
 
     public override void move(){
@@ -46,10 +53,10 @@ public class Pacman : MazeEntity{
             SetDirection(nextDirection);
         }
 
-        Vector2 position = rigidbody.position;
-        Vector2 translation = direction * speed * speedMultiplier * Time.fixedDeltaTime;
-
-        rigidbody.MovePosition(position + translation);
+        float DTSpeed = (speed * speedMultiplier * Time.deltaTime);
+        if(!checkCollision(direction, DTSpeed)){
+            transform.position = (Vector2)transform.position + (direction * DTSpeed);
+        }
     }
 
     public void SetDirection(Vector2 direction, bool forced = false)
@@ -77,5 +84,12 @@ public class Pacman : MazeEntity{
 
     public override void reset(){
         transform.position = startingPosition;
+        animator.setAnimation(PacmanAnimation.Animation.Move);
+        stopRotating = false;
+    }
+
+    public void die(){
+        animator.setAnimation(PacmanAnimation.Animation.Death);
+        stopRotating = true;
     }
 }

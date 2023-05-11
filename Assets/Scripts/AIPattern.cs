@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using UnityEngine;
 
 public class AIPool {
-    public enum AIType { Blinky, Inky, Pinky, Clyde };
+    public enum AIType { Blinky, Inky, Pinky, Clyde, Winky, Slinky, Thinky };
     Dictionary<AIType, int> numTypes; // holds a count of how many of each type are in use
     GameObject pacman;
     GameObject jailNode;
@@ -19,6 +19,7 @@ public class AIPool {
         this.jailNode = jailNode;
     }
 
+    //============ OO Pattern: Object Pool / Simple Factory ============
     public AIPattern get(AIType type){
         if(numTypes[type] < 1 || !locked){
             numTypes[type] += 1;
@@ -28,6 +29,9 @@ public class AIPool {
                 case AIType.Inky: return new InkyPattern(pacman, jailNode);
                 case AIType.Pinky: return new PinkyPattern(pacman, jailNode);
                 case AIType.Clyde: return new ClydePattern(pacman, jailNode);
+                case AIType.Winky: return new WinkyPattern(pacman, jailNode);
+                case AIType.Slinky: return new SlinkyPattern(pacman, jailNode);
+                case AIType.Thinky: return new ThinkyPattern(pacman, jailNode);
             }
         }
         return null;
@@ -42,14 +46,28 @@ public class AIPool {
         return get(types[index]);
     }
 
-    public static GameObject closestToGoal(Vector2 goal, GameObject[] options){
+    public void freeAll(){
+        foreach(AIType type in Enum.GetValues(typeof(AIType))){
+            numTypes[type] = 0;
+        }
+    }
+
+    public static GameObject closestToGoal(Vector2 goal, Vector2 startPos, GameObject[] options){
+        // 5% chance to move randomly instead, to avoid getting stuck
+        if(UnityEngine.Random.Range(0f, 1f) < 0.05f){
+            int chosen = (int)UnityEngine.Random.Range(0, options.Length);
+            return options[chosen];
+        }
+
         GameObject bestOption = null;
         float bestDist = Mathf.Infinity;
         foreach(GameObject option in options){
             Vector2 option2D = option.transform.position;
-            float dist = Vector2.Distance(option2D, goal);
+            float goalDist = Vector2.Distance(option2D, goal);
+            float travelDist = Vector2.Distance(startPos, option2D);
+            float dist = goalDist + travelDist;
             
-            if(dist < bestDist){
+            if(dist < bestDist || (dist == bestDist && option2D.y >= startPos.y)){
                 bestDist = dist;
                 bestOption = option;
             }
@@ -78,12 +96,14 @@ public class AIPool {
 
 public enum AIMode { Chase, Scatter, Frightened, Eaten };
 
+//============ OO Pattern: Strategy ============
 public interface AIPattern {
     GameObject getNextMove(GameObject[] moves);
     GameObject getJailNode();
     string getName();
     Color getColor();
     void setAIMode(AIMode mode);
+    void setParent(Ghost parent);
     AIMode getAIMode();
 }
 
@@ -93,6 +113,7 @@ public class BlinkyPattern : AIPattern {
     Color color = new Vector4(1f, 0f, 0f, 1f);
     Vector2 scatterPos = new Vector2(10f, 10.5f);
     GameObject pacman;
+    Ghost parent;
     GameObject jailNode;
 
     public BlinkyPattern(GameObject pacman, GameObject jailNode){
@@ -104,20 +125,22 @@ public class BlinkyPattern : AIPattern {
     public GameObject getNextMove(GameObject[] moves){
         moves = jailMoveCheck(moves);
 
+        Vector2 currentPos = parent.gameObject.transform.position;
+
         switch(currentMode){
             case AIMode.Chase:
                 // get the target tile
                 Vector2 pacmanPos = pacman.transform.position;
-                return AIPool.closestToGoal(pacmanPos, moves);
+                return AIPool.closestToGoal(pacmanPos, currentPos, moves);
 
             case AIMode.Scatter:
                 // head to scatter corner
                 if(panic){
                     // do chase pathfinding anyway
                     Vector2 pacmanPosition = pacman.transform.position;
-                    return AIPool.closestToGoal(pacmanPosition, moves);
+                    return AIPool.closestToGoal(pacmanPosition, currentPos, moves);
                 }else{
-                    return AIPool.closestToGoal(scatterPos, moves);
+                    return AIPool.closestToGoal(scatterPos, currentPos, moves);
                 }
 
             case AIMode.Frightened:
@@ -131,7 +154,7 @@ public class BlinkyPattern : AIPattern {
             case AIMode.Eaten:
                 // head to jail node
                 Vector2 jailPos = jailNode.transform.position;
-                return AIPool.closestToGoal(jailPos, moves);
+                return AIPool.closestToGoal(jailPos, currentPos, moves);
 
             default:
                 return null;
@@ -157,6 +180,10 @@ public class BlinkyPattern : AIPattern {
         return jailNode;
     }
 
+    public void setParent(Ghost parent){
+        this.parent = parent;
+    }
+
     private GameObject[] jailMoveCheck(GameObject[] moves){
         List<GameObject> result = new List<GameObject>();
         foreach(GameObject node in moves){
@@ -173,19 +200,26 @@ public class InkyPattern : AIPattern {
     Color color = new Vector4(71f/255f, 185f/255f, 255f/255f, 1f);
     Vector2 scatterPos = new Vector2(11.5f, -14f);
     Pacman pacman;
+    Ghost parent;
     GameObject jailNode;
-    Ghost teamLeader;
+    Ghost teamLeader = null;
 
     public InkyPattern(GameObject pacman, GameObject jailNode){
         currentMode = AIMode.Scatter;
         this.pacman = pacman.GetComponent<Pacman>();
         this.jailNode = jailNode;
 
-        pickLeader();
+        //pickLeader();
     }
 
     public GameObject getNextMove(GameObject[] moves){
+        if(teamLeader == null){
+            pickLeader();
+        }
+
         moves = jailMoveCheck(moves);
+
+        Vector2 currentPos = parent.gameObject.transform.position;
 
         switch(currentMode){
             case AIMode.Chase:
@@ -196,11 +230,11 @@ public class InkyPattern : AIPattern {
                 Vector2 offsetA = (pacman.getDirection() * 1.5f);
                 Vector2 offsetB = (pacmanPos + offsetA - leaderPos);
 
-                return AIPool.closestToGoal(pacmanPos + offsetA + offsetB, moves);
+                return AIPool.closestToGoal(pacmanPos + offsetA + offsetB, currentPos, moves);
 
             case AIMode.Scatter:
                 // head to scatter corner
-                return AIPool.closestToGoal(scatterPos, moves);
+                return AIPool.closestToGoal(scatterPos, currentPos, moves);
 
             case AIMode.Frightened:
                 // random move
@@ -213,7 +247,7 @@ public class InkyPattern : AIPattern {
             case AIMode.Eaten:
                 // head to jail node
                 Vector2 jailPos = jailNode.transform.position;
-                return AIPool.closestToGoal(jailPos, moves);
+                return AIPool.closestToGoal(jailPos, currentPos, moves);
 
             default:
                 return null;
@@ -239,12 +273,19 @@ public class InkyPattern : AIPattern {
         return jailNode;
     }
 
+    public void setParent(Ghost parent){
+        this.parent = parent;
+    }
+
     private int rankTeammate(Ghost teammate){
         switch(teammate.getAIPattern().getName()){
             case "Blinky": return 1;
             case "Pinky": return 2;
-            case "Inky": return 4;
-            case "Clyde": return 3;
+            case "Inky": return 7;
+            case "Clyde": return 5;
+            case "Slinky": return 3;
+            case "Thinky": return 4;
+            case "Winky": return 6;
             default: return 64;
         }
     }
@@ -280,6 +321,7 @@ public class PinkyPattern : AIPattern {
     Color color = new Vector4(255f/255f, 184f/255f, 255f/255f, 1f);
     Vector2 scatterPos = new Vector2(-10f, 10.5f);
     Pacman pacman;
+    Ghost parent;
     GameObject jailNode;
 
     public PinkyPattern(GameObject pacman, GameObject jailNode){
@@ -291,16 +333,18 @@ public class PinkyPattern : AIPattern {
     public GameObject getNextMove(GameObject[] moves){
         moves = jailMoveCheck(moves);
 
+        Vector2 currentPos = parent.gameObject.transform.position;
+
         switch(currentMode){
             case AIMode.Chase:
                 // get the target tile
                 Vector2 pacmanPos = pacman.gameObject.transform.position;
                 Vector2 offset = (pacman.getDirection() * 3f);
-                return AIPool.closestToGoal(pacmanPos + offset, moves);
+                return AIPool.closestToGoal(pacmanPos + offset, currentPos, moves);
 
             case AIMode.Scatter:
                 // head to scatter corner
-                return AIPool.closestToGoal(scatterPos, moves);
+                return AIPool.closestToGoal(scatterPos, currentPos, moves);
 
             case AIMode.Frightened:
                 // random move
@@ -313,7 +357,7 @@ public class PinkyPattern : AIPattern {
             case AIMode.Eaten:
                 // head to jail node
                 Vector2 jailPos = jailNode.transform.position;
-                return AIPool.closestToGoal(jailPos, moves);
+                return AIPool.closestToGoal(jailPos, currentPos, moves);
 
             default:
                 return null;
@@ -339,6 +383,10 @@ public class PinkyPattern : AIPattern {
         return jailNode;
     }
 
+    public void setParent(Ghost parent){
+        this.parent = parent;
+    }
+
     private GameObject[] jailMoveCheck(GameObject[] moves){
         List<GameObject> result = new List<GameObject>();
         foreach(GameObject node in moves){
@@ -355,6 +403,7 @@ public class ClydePattern : AIPattern {
     Color color = new Vector4(255f/255f, 185f/255f, 81f/255f, 1f);
     Vector2 scatterPos = new Vector2(-11.5f, -14f);
     GameObject pacman;
+    Ghost parent;
     GameObject jailNode;
 
     public ClydePattern(GameObject pacman, GameObject jailNode){
@@ -366,26 +415,22 @@ public class ClydePattern : AIPattern {
     public GameObject getNextMove(GameObject[] moves){
         moves = jailMoveCheck(moves);
 
+        Vector2 currentPos = parent.gameObject.transform.position;
+
         switch(currentMode){
             case AIMode.Chase:
                 // get the target tile
                 Vector2 pacmanPos = pacman.transform.position;
-                Vector2 selfPos = pacmanPos;
-                foreach(Ghost member in Ghost.team){
-                    if(member.getAIPattern() == this){
-                        selfPos = member.gameObject.transform.position;
-                    }
-                }
 
-                if(Vector2.Distance(selfPos, pacmanPos) > 12f){
-                    return AIPool.closestToGoal(pacmanPos, moves);
+                if(Vector2.Distance(currentPos, pacmanPos) > 12f){
+                    return AIPool.closestToGoal(pacmanPos, currentPos, moves);
                 }else{
-                    return AIPool.closestToGoal(scatterPos, moves);
+                    return AIPool.closestToGoal(scatterPos, currentPos, moves);
                 }
 
             case AIMode.Scatter:
                 // head to scatter corner
-                return AIPool.closestToGoal(scatterPos, moves);
+                return AIPool.closestToGoal(scatterPos, currentPos, moves);
 
             case AIMode.Frightened:
                 // random move
@@ -398,7 +443,7 @@ public class ClydePattern : AIPattern {
             case AIMode.Eaten:
                 // head to jail node
                 Vector2 jailPos = jailNode.transform.position;
-                return AIPool.closestToGoal(jailPos, moves);
+                return AIPool.closestToGoal(jailPos, currentPos, moves);
 
             default:
                 return null;
@@ -422,6 +467,294 @@ public class ClydePattern : AIPattern {
 
     public GameObject getJailNode(){
         return jailNode;
+    }
+
+    public void setParent(Ghost parent){
+        this.parent = parent;
+    }
+
+    private GameObject[] jailMoveCheck(GameObject[] moves){
+        List<GameObject> result = new List<GameObject>(moves);
+        if(result.Contains(jailNode) && currentMode != AIMode.Eaten){
+            result.Remove(jailNode);
+        }
+        return result.ToArray();
+    }
+}
+
+public class WinkyPattern : AIPattern {
+    AIMode currentMode;
+    Color color = new Vector4(0f, 1f, 0f, 1f);
+    Vector2 scatterPos = new Vector2(-10f, 10.5f);
+    GameObject pacman;
+    Ghost parent;
+    GameObject jailNode;
+    Vector2 currentDir = new Vector2(0f, 1f);
+
+    public WinkyPattern(GameObject pacman, GameObject jailNode){
+        currentMode = AIMode.Scatter;
+        this.pacman = pacman;
+        this.jailNode = jailNode;
+    }
+
+    public GameObject getNextMove(GameObject[] moves){
+        moves = jailMoveCheck(moves);
+
+        Vector2 currentPos = parent.gameObject.transform.position;
+
+        switch(currentMode){
+            case AIMode.Chase:
+                Vector2 pacmanPos = pacman.transform.position;
+
+                // go in our current direction or turn
+                GameObject bestOption = null;
+                float minAngle = Mathf.Infinity;
+                foreach(GameObject move in moves){
+                    Vector2 movePos = ((Vector2)move.transform.position - currentPos).normalized;
+                    float moveAngle = Vector2.Angle(movePos, currentDir);
+                    if(moveAngle < minAngle){
+                        minAngle = moveAngle;
+                        bestOption = move;
+                    }
+                }
+                if(minAngle != Mathf.Infinity && minAngle >= 90f){
+                    // random move
+                    if(moves.Length > 0){
+                        int chosen = UnityEngine.Random.Range(0, moves.Length);
+                        return moves[chosen];
+                    }
+                    return null;
+                }else{
+                    return bestOption;
+                }
+
+            case AIMode.Scatter:
+                // head to scatter corner
+                return AIPool.closestToGoal(scatterPos, currentPos, moves);
+
+            case AIMode.Frightened:
+                // random move
+                if(moves.Length > 0){
+                    int chosen = UnityEngine.Random.Range(0, moves.Length);
+                    return moves[chosen];
+                }
+                return null;
+
+            case AIMode.Eaten:
+                // head to jail node
+                Vector2 jailPos = jailNode.transform.position;
+                return AIPool.closestToGoal(jailPos, currentPos, moves);
+
+            default:
+                return null;
+        }
+    }
+
+    public string getName(){
+        return "Winky";
+    }
+
+    public void setAIMode(AIMode mode){
+        currentMode = mode;
+    }
+    public AIMode getAIMode(){
+        return currentMode;
+    }
+
+    public Color getColor(){
+        return color;
+    }
+
+    public GameObject getJailNode(){
+        return jailNode;
+    }
+
+    public void setParent(Ghost parent){
+        this.parent = parent;
+    }
+
+    private GameObject[] jailMoveCheck(GameObject[] moves){
+        List<GameObject> result = new List<GameObject>(moves);
+        if(result.Contains(jailNode) && currentMode != AIMode.Eaten){
+            result.Remove(jailNode);
+        }
+        return result.ToArray();
+    }
+}
+
+public class SlinkyPattern : AIPattern {
+    AIMode currentMode;
+    Color color = new Vector4(185f/255f, 71f/255f, 185f/255f, 1f);
+    Vector2 scatterPos = new Vector2(-11.5f, -14f);
+    GameObject pacman;
+    Ghost parent;
+    GameObject jailNode;
+
+    Vector2[] pelletLocations = {
+        new Vector2(12.5f, 10.5f),
+        new Vector2(12.5f, -14f),
+        new Vector2(-12.5f, 10.5f),
+        new Vector2(-12.5f, -14f)
+    };
+    int pelletIndex = 0;
+
+    public SlinkyPattern(GameObject pacman, GameObject jailNode){
+        currentMode = AIMode.Scatter;
+        this.pacman = pacman;
+        this.jailNode = jailNode;
+    }
+
+    public GameObject getNextMove(GameObject[] moves){
+        moves = jailMoveCheck(moves);
+
+        Vector2 currentPos = parent.gameObject.transform.position;
+
+        switch(currentMode){
+            case AIMode.Chase:
+                // get the target tile
+                Vector2 targPos = pelletLocations[pelletIndex];
+
+                if(Vector2.Distance(currentPos, targPos) > 0.2f){
+                    pelletIndex += 1;
+                    if(pelletIndex >= pelletLocations.Length){
+                        pelletIndex = 0;
+                    }
+                    targPos = pelletLocations[pelletIndex];
+                }
+                return AIPool.closestToGoal(targPos, currentPos, moves);
+
+            case AIMode.Scatter:
+                // head to scatter corner
+                return AIPool.closestToGoal(scatterPos, currentPos, moves);
+
+            case AIMode.Frightened:
+                // random move
+                if(moves.Length > 0){
+                    int chosen = UnityEngine.Random.Range(0, moves.Length);
+                    return moves[chosen];
+                }
+                return null;
+
+            case AIMode.Eaten:
+                // head to jail node
+                Vector2 jailPos = jailNode.transform.position;
+                return AIPool.closestToGoal(jailPos, currentPos, moves);
+
+            default:
+                return null;
+        }
+    }
+
+    public string getName(){
+        return "Slinky";
+    }
+
+    public void setAIMode(AIMode mode){
+        currentMode = mode;
+    }
+    public AIMode getAIMode(){
+        return currentMode;
+    }
+
+    public Color getColor(){
+        return color;
+    }
+
+    public GameObject getJailNode(){
+        return jailNode;
+    }
+
+    public void setParent(Ghost parent){
+        this.parent = parent;
+    }
+
+    private GameObject[] jailMoveCheck(GameObject[] moves){
+        List<GameObject> result = new List<GameObject>(moves);
+        if(result.Contains(jailNode) && currentMode != AIMode.Eaten){
+            result.Remove(jailNode);
+        }
+        return result.ToArray();
+    }
+}
+
+public class ThinkyPattern : AIPattern {
+    AIMode currentMode;
+    Color color = new Vector4(71f/255f, 185f/255f, 175f/255f, 1f);
+    Vector2 scatterPos = new Vector2(-11.5f, -14f);
+    GameObject pacman;
+    Ghost parent;
+    GameObject jailNode;
+
+    public ThinkyPattern(GameObject pacman, GameObject jailNode){
+        currentMode = AIMode.Scatter;
+        this.pacman = pacman;
+        this.jailNode = jailNode;
+    }
+
+    public GameObject getNextMove(GameObject[] moves){
+        moves = jailMoveCheck(moves);
+
+        Vector2 currentPos = parent.gameObject.transform.position;
+
+        switch(currentMode){
+            case AIMode.Chase:
+                // get the target tile
+                Vector2 targPos = pacman.transform.position;
+
+                if(Vector2.Distance(currentPos, targPos) < 18f){
+                    return AIPool.closestToGoal(targPos, currentPos, moves);
+                }else{
+                    // random move
+                    if(moves.Length > 0){
+                        int chosen = UnityEngine.Random.Range(0, moves.Length);
+                        return moves[chosen];
+                    }
+                    return null;
+                }
+
+            case AIMode.Scatter:
+                // head to scatter corner
+                return AIPool.closestToGoal(scatterPos, currentPos, moves);
+
+            case AIMode.Frightened:
+                // random move
+                if(moves.Length > 0){
+                    int chosen = UnityEngine.Random.Range(0, moves.Length);
+                    return moves[chosen];
+                }
+                return null;
+
+            case AIMode.Eaten:
+                // head to jail node
+                Vector2 jailPos = jailNode.transform.position;
+                return AIPool.closestToGoal(jailPos, currentPos, moves);
+
+            default:
+                return null;
+        }
+    }
+
+    public string getName(){
+        return "Thinky";
+    }
+
+    public void setAIMode(AIMode mode){
+        currentMode = mode;
+    }
+    public AIMode getAIMode(){
+        return currentMode;
+    }
+
+    public Color getColor(){
+        return color;
+    }
+
+    public GameObject getJailNode(){
+        return jailNode;
+    }
+
+    public void setParent(Ghost parent){
+        this.parent = parent;
     }
 
     private GameObject[] jailMoveCheck(GameObject[] moves){

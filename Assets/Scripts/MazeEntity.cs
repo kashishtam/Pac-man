@@ -44,10 +44,14 @@ public abstract class MazeEntity : MonoBehaviour {
         movingObject.position = (movingObject.position + (Vector3.right * new_pos[0]) + (Vector3.up * new_pos[1]));
     }
 
-    public bool checkCollision(Vector2 direction){
+    public bool checkCollision(Vector2 direction, float speed){
         // If no collider is hit then there is no obstacle in that direction
-        RaycastHit2D hit = Physics2D.BoxCast(transform.position, Vector2.one * 0.75f, 0f, direction, 1.5f, obstacleLayer);
+        RaycastHit2D hit = Physics2D.BoxCast(transform.position, Vector2.one * 0.75f, 0f, direction, speed, obstacleLayer);
         return hit.collider != null;
+    }
+
+    public bool checkCollision(Vector2 direction){
+        return checkCollision(direction, 1.5f);
     }
 
     public abstract void move();

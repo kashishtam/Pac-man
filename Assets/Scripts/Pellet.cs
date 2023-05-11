@@ -5,7 +5,6 @@ using UnityEngine;
 public class Pellet : MonoBehaviour, Edible
 {
     public int points = 10;
-
     public void Eat(){
         FindObjectOfType<GameManager>().PelletEaten(this);
     }
